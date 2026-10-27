@@ -13,7 +13,7 @@ enum Control: String, CaseIterable, Codable, Identifiable {
 }
 
 enum MacAction: String, CaseIterable, Codable, Identifiable {
-    case none, assistant, voiceNote, keys, shortcut, previousAssistant, nextAssistant, voiceToggle
+    case none, assistant, voiceNote, keys, shortcut, previousAssistant, nextAssistant, voiceToggle, previousBot, nextBot
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -22,9 +22,11 @@ enum MacAction: String, CaseIterable, Codable, Identifiable {
         case .voiceNote: return "Record a voice note"
         case .keys: return "Press a keyboard shortcut"
         case .shortcut: return "Run a Shortcut"
-        case .previousAssistant: return "Previous assistant"
-        case .nextAssistant: return "Next assistant"
+        case .previousAssistant: return "Previous app in the assistants list"
+        case .nextAssistant: return "Next app in the assistants list"
         case .voiceToggle: return "Toggle voice chat"
+        case .previousBot: return "Previous bot"
+        case .nextBot: return "Next bot"
         }
     }
     /// Actions that last as long as the control is held.
@@ -80,6 +82,8 @@ final class ButtonsStore: ObservableObject {
     @Published var assistants: [Assistant] { didSet { saveAssistants() } }
     @Published var active: String { didSet { if persist { UserDefaults.standard.set(active,forKey:"activeAssistant") } } }
     @Published var voiceOn: [String:Bool] = [:]
+    @Published var bot = ""          // the bot open in Grok Bot after the last switch
+    @Published var botKeys: BotKeys { didSet { if persist, let data = try? JSONEncoder().encode(botKeys) { UserDefaults.standard.set(data,forKey:"botKeys") } } }
     private let persist: Bool
     init(persist: Bool = true) {
         self.persist = persist
@@ -91,6 +95,7 @@ final class ButtonsStore: ObservableObject {
         mappings = loaded
         assistants = persist ? (UserDefaults.standard.data(forKey:"assistantList").flatMap { try? JSONDecoder().decode([Assistant].self,from:$0) } ?? Assistant.defaults) : Assistant.defaults
         active = persist ? UserDefaults.standard.string(forKey:"activeAssistant") ?? "" : ""
+        botKeys = persist ? UserDefaults.standard.data(forKey:"botKeys").flatMap { try? JSONDecoder().decode(BotKeys.self,from:$0) } ?? .optionArrows : .optionArrows
     }
     subscript(control: Control) -> Mapping {
         get { mappings[control] ?? Mapping() }
@@ -105,16 +110,20 @@ final class ButtonsStore: ObservableObject {
         guard persist else { return }
         if let data = try? JSONEncoder().encode(assistants) { UserDefaults.standard.set(data,forKey:"assistantList") }
     }
-    static let assistantActions: Set<MacAction> = [.previousAssistant,.nextAssistant,.voiceToggle]
+    static let assistantActions: Set<MacAction> = [.previousAssistant,.nextAssistant,.voiceToggle,.previousBot,.nextBot]
     var usesAssistants: Bool { Control.allCases.contains { ButtonsStore.assistantActions.contains(self[$0].action) } }
-    /// "Active: Claude · voice off", shown beside the buttons summary while the buttons drive assistants.
-    var assistantLine: String { active.isEmpty ? "" : "Active: \(active) · voice \(voiceOn[active] == true ? "on" : "off")" }
-    /// One click: orange = previous assistant, middle = next assistant, bottom = toggle voice chat. The handle is left as it is.
+    var usesBots: Bool { Control.allCases.contains { [.previousBot,.nextBot].contains(self[$0].action) } }
+    /// "Bot: Mac · voice off", shown beside the buttons summary while the buttons drive assistants.
+    var assistantLine: String {
+        let who = usesBots && !bot.isEmpty ? "Bot: \(bot)" : active.isEmpty ? "" : "Active: \(active)"
+        return who.isEmpty ? "" : "\(who) · voice \(voiceOn[active] == true ? "on" : "off")"
+    }
+    /// One click: orange = previous bot, middle = next bot (inside Grok Bot), bottom = toggle voice chat. The handle is left as it is.
     func applyAssistantPreset() {
-        self[.effect] = Mapping(action:.previousAssistant)
-        self[.sample] = Mapping(action:.nextAssistant)
+        self[.effect] = Mapping(action:.previousBot)
+        self[.sample] = Mapping(action:.nextBot)
         self[.play] = Mapping(action:.voiceToggle)
-        notice = "Assistant buttons are set up."
+        notice = "Bot buttons are set up for Grok Bot."
     }
     /// Buttons whose mic action is switched off (bits for the mic's block mask).
     var blockMask: UInt8 {
@@ -130,8 +139,10 @@ final class ButtonsStore: ObservableObject {
             case .assistant: what = m.assistant
             case .voiceNote: what = "voice note"
             case .keys: what = m.combo?.label ?? "shortcut"
-            case .previousAssistant: what = "previous assistant"
-            case .nextAssistant: what = "next assistant"
+            case .previousAssistant: what = "previous app"
+            case .nextAssistant: what = "next app"
+            case .previousBot: what = "previous bot"
+            case .nextBot: what = "next bot"
             case .voiceToggle: what = "voice chat"
             default: what = m.shortcutName.isEmpty ? "Shortcut" : m.shortcutName
             }
@@ -210,6 +221,8 @@ final class ButtonEngine {
             if !name.isEmpty { DispatchQueue.global().async { _ = try? runTool("/usr/bin/shortcuts",["run",name]) } }
         case .previousAssistant: router.cycle(-1)
         case .nextAssistant: router.cycle(1)
+        case .previousBot: router.cycleBot(-1); store.refreshTrust()
+        case .nextBot: router.cycleBot(1); store.refreshTrust()
         case .voiceToggle: router.toggleVoice(); store.refreshTrust()
         }
     }
@@ -290,7 +303,7 @@ struct ButtonsView: View {
         .foregroundColor(Palette.ink)
         .onAppear { store.refreshTrust(); store.loadShortcuts() }
     }
-    var needsKeys: Bool { Control.allCases.contains { [.assistant,.keys,.voiceToggle].contains(store[$0].action) } }
+    var needsKeys: Bool { Control.allCases.contains { [.assistant,.keys,.voiceToggle,.previousBot,.nextBot].contains(store[$0].action) } }
 }
 
 struct SmallButton: View {
@@ -319,7 +332,7 @@ struct ControlRow: View {
             Field(label:"ON YOUR MAC") {
                 ChoiceMenu(value:m.action.title,options:MacAction.allCases.map { $0.title }) { title in
                     store[control].action = MacAction.allCases.first { $0.title == title } ?? .none
-                    if [.assistant,.keys,.voiceToggle].contains(store[control].action) { store.refreshTrust() }
+                    if [.assistant,.keys,.voiceToggle,.previousBot,.nextBot].contains(store[control].action) { store.refreshTrust() }
                 }
             }
             if m.action == .assistant {
@@ -362,9 +375,11 @@ struct ControlRow: View {
         case .voiceNote: return "\(verb) to record a voice note\(clean). Let go to save it in Music/FX–USB/Voice notes."
         case .keys: return m.combo.map { "\(tap): FX–USB presses \($0.label)." } ?? "Record the shortcut to press."
         case .shortcut: return m.shortcutName.isEmpty ? "Choose a Shortcut from the Shortcuts app." : "\(tap): runs the Shortcut \u{201C}\(m.shortcutName)\u{201D}."
-        case .previousAssistant: return "\(tap): brings the previous assistant in the list to the front."
-        case .nextAssistant: return "\(tap): brings the next assistant in the list to the front."
-        case .voiceToggle: return "\(tap): starts voice chat in the active assistant, or ends it (its voice button, or its voice key)."
+        case .previousAssistant: return "\(tap): brings the previous app in the assistants list to the front."
+        case .nextAssistant: return "\(tap): brings the next app in the assistants list to the front."
+        case .voiceToggle: return "\(tap): starts voice chat in the active assistant (Grok Bot unless you changed the list), or ends it. A running call is not touched when you switch bots."
+        case .previousBot: return "\(tap): brings Grok Bot to the front and presses \(store.botKeys.previous.label) to open the previous bot."
+        case .nextBot: return "\(tap): brings Grok Bot to the front and presses \(store.botKeys.next.label) to open the next bot."
         }
     }
 }

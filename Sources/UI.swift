@@ -559,7 +559,7 @@ final class MainWindow {
     } else { print("buttons preview: renderer returned no image") }
     try? FileManager.default.createDirectory(atPath:directory,withIntermediateDirectories:true)
     let assistantStore = ButtonsStore(persist:false)
-    assistantStore.applyAssistantPreset(); assistantStore.active = "Claude"; assistantStore.voiceOn["Claude"] = true; assistantStore.trusted = true
+    assistantStore.applyAssistantPreset(); assistantStore.active = "Grok Bot"; assistantStore.bot = "Mac"; assistantStore.voiceOn["Grok Bot"] = true; assistantStore.trusted = true
     let assistantsRenderer = ImageRenderer(content:ButtonsView(store:assistantStore))
     assistantsRenderer.scale = 2
     if let image = assistantsRenderer.nsImage, let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data:tiff) {

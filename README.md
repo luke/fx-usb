@@ -87,10 +87,11 @@ Give the mic's handle and buttons a job on your Mac. In the app, click **SET UP*
 | Record a voice note | Hold to record, let go to save a WAV in `~/Music/FX–USB/Voice notes`. |
 | Press a keyboard shortcut | One press, one shortcut. |
 | Run a Shortcut | Runs any Shortcut from the Shortcuts app. |
-| Previous / next assistant | One press brings the previous or next app in your assistant list to the front (default list: Grok Bot, Claude, ChatGPT; apps that are not installed are skipped). The active one shows beside BUTTONS and in the Buttons window. |
-| Toggle voice chat | One press starts voice chat in the active assistant, or ends it. FX–USB presses the app's own voice chat / hang up button through Accessibility (Grok Bot, best effort for Claude), or sends the app's voice hotkey (ChatGPT: ⌃⇧V, set in ChatGPT → Settings → Voice). |
+| Previous / next bot | Switches between your bots *inside the Grok Bot app*. One press brings Grok Bot to the front and presses its own shortcut, ⌥↑ for the previous bot and ⌥↓ for the next (or ⌃⇧Tab / ⌃Tab, or keys you record, under BOTS IN GROK BOT). The open bot is read back through Accessibility and shown ("Bot: Mac"). A running voice chat keeps running while you switch. |
+| Toggle voice chat | One press starts voice chat in the bot that is open in Grok Bot, or hangs up. FX–USB presses Grok Bot's own "Start voice chat" / "Hang up" button through Accessibility (the message box must be empty to start). If a call is running in another chat, the press ends it and starts one here ("End and Chat"). Other apps can be added to the voice list (Claude: button search only; ChatGPT: its voice hotkey, ⌃⇧V by default). |
+| Previous / next app | Optional: goes round the list of voice chat apps and brings each to the front. Off by default (the list holds only Grok Bot). |
 
-- **SET UP ASSISTANT BUTTONS** gives the orange button *Previous assistant*, the middle one *Next assistant* and the bottom one *Toggle voice chat* in one click. Edit, reorder or add apps in the assistant list that appears below. `FXMic --assistants` prints what was found and whether each app's voice button is visible to Accessibility.
+- **SET UP ASSISTANT BUTTONS** gives the orange button *Previous bot*, the middle one *Next bot* and the bottom one *Toggle voice chat* in one click. `FXMic --assistants` prints what was found: the open bot, the bots in Grok Bot's sidebar, and whether the voice button is visible to Accessibility. Needs the Accessibility permission for FX–USB.
 - A button with a Mac job stops doing its mic job (next effect, next sample, play sample), unless you tick **also on the mic**. The handle always lets your voice through.
 - Pressing keys for other apps needs a one-time permission: **System Settings → Privacy & Security → Accessibility → FX–USB**. The Buttons window links there.
 - Use the push-to-talk or dictation shortcut from your assistant's own settings, then record the same keys in FX–USB.
@@ -113,7 +114,7 @@ What was tried, measured and changed along the way is in [docs/engineering-log.m
 | `Sources/main.swift` | USB reader, packet decoder, timeline, jitter buffer, audio outputs, app delegate, test modes |
 | `Sources/UI.swift` | SwiftUI window, menu bar panel, mic drawing, menu bar and app icons |
 | `Sources/Buttons.swift` | Buttons window, key-combo recorder, and the engine that turns mic presses into Mac actions |
-| `Sources/Assistants.swift` | Assistant list, previous/next cycling, voice chat toggle (Accessibility button, then hotkey) and their self-test |
+| `Sources/Assistants.swift` | Bot switching inside Grok Bot, voice chat toggle (Accessibility button, then hotkey), optional app list and their self-test |
 | `Sources/FeedbackGuard.swift` | Frequency shifter, howl detector with notch filters, limiter, room simulation |
 | `Sources/fxmic_reader.py` | The reader uploaded to the mic's RAM (MicroPython + viper) |
 | `driver/` | Builds and installs the FX–USB virtual microphone from BlackHole v0.7.1 |
