@@ -984,6 +984,7 @@ func argument(_ name: String) -> String? {
 
 if CommandLine.arguments.contains("--self-test") { selfTest() }
 else if CommandLine.arguments.contains("--assistants") { printAssistants() }
+else if let name = argument("--assistant-focus") { focusAssistant(name) }
 else if let directory = argument("--iconset") { try! writeIconset(directory) }
 else if let directory = argument("--preview") { MainActor.assumeIsolated { renderPreviews(directory) } }
 else if CommandLine.arguments.contains("--devices") { for device in audioDevices() { print("\(device.id) \(device.name) [\(device.uid)] \(nominalRate(device.id)) Hz, buffer \(bufferFrames(device.id)) frames") } }

@@ -26,6 +26,7 @@ enum VoiceOutcome: Equatable { case pressed(on: Bool), notFound, noPermission }
 func voiceKind(_ text: String) -> VoiceKind? {
     let t = text.lowercased()
     if ["voice input","dictat","transcript"].contains(where:t.contains) { return nil }     // dictation is not a call
+    if t.contains("·") || t.range(of:"\\d+:\\d\\d",options:.regularExpression) != nil { return nil }   // "Voice chat · 01:38": the running call's timer, not a button to press
     if ["hang up","end call","end voice","stop voice","end conversation"].contains(where:t.contains) { return .stop }
     if ["voice chat","voice mode","start voice","start a voice"].contains(where:t.contains) { return .start }
     return nil
@@ -129,7 +130,9 @@ final class AssistantRouter {
         let id = bundleID(a)
         func front() -> Bool { id != nil && NSWorkspace.shared.frontmostApplication?.bundleIdentifier == id }
         let deadline = Date().addingTimeInterval(wait)
-        while !front() && Date() < deadline { Thread.sleep(forTimeInterval:0.03) }
+        while !front() && Date() < deadline {
+            if Thread.isMainThread { RunLoop.current.run(until:Date().addingTimeInterval(0.03)) } else { Thread.sleep(forTimeInterval:0.03) }   // the frontmost app updates on the main run loop
+        }
         return front() || (wait == 0 && id != nil)
     }
 
@@ -139,13 +142,15 @@ final class AssistantRouter {
         var value: CFTypeRef?
         return AXUIElementCopyAttributeValue(e,name as CFString,&value) == .success ? value : nil
     }
+    private static var enabled: Set<pid_t> = []      // apps already asked this session (the flag cannot be read back reliably)
     /// Electron apps build their Accessibility tree only after being asked. True if this call switched it on just now.
     @discardableResult static func enableAX(_ a: Assistant) -> Bool {
         guard AXIsProcessTrusted(), let app = runningApp(a) else { return false }
         let element = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(element,0.5)
-        if (attribute(element,"AXManualAccessibility") as? Bool) == true { return false }
-        return AXUIElementSetAttributeValue(element,"AXManualAccessibility" as CFString,kCFBooleanTrue) == .success
+        let first = !enabled.contains(app.processIdentifier)
+        enabled.insert(app.processIdentifier)
+        return AXUIElementSetAttributeValue(element,"AXManualAccessibility" as CFString,kCFBooleanTrue) == .success && first
     }
     struct Scan { var hits: [(element: AXUIElement, text: String, kind: VoiceKind)] = []; var composer: AXUIElement?; var nodes = 0 }
     /// Walks the app's windows for voice chat / hang up buttons (and the message box).
@@ -199,11 +204,12 @@ final class AssistantRouter {
         guard a.tryButton else { return line + ", button search off" }
         guard AXIsProcessTrusted() else { return line + ", Accessibility not allowed for this process" }
         guard runningApp(a) != nil else { return line }
-        let fresh = enableAX(a)
+        let fresh = enableAX(a), started = Date()
         var found = scan(a), tries = 0
         while found.hits.isEmpty && fresh && tries < 10 { Thread.sleep(forTimeInterval:0.15); found = scan(a); tries += 1 }
+        let took = Int(Date().timeIntervalSince(started) * 1000)
         let names = found.hits.map { "\($0.kind == .stop ? "stop" : "start") “\($0.text)”" }
-        return line + ", AX: \(found.nodes) nodes, " + (names.isEmpty ? "no voice button" : names.joined(separator:", "))
+        return line + ", AX: \(found.nodes) nodes in \(took) ms, " + (names.isEmpty ? "no voice button" : names.joined(separator:", "))
     }
 }
 
@@ -212,6 +218,14 @@ func printAssistants() {
     let router = AssistantRouter(store:store,tap:{ _ in })
     print("Assistants (active: \(router.current()?.name ?? "none")):")
     for a in store.assistants { print(AssistantRouter.describe(a,active:a.name == store.active)) }
+}
+
+/// `FXMic --assistant-focus NAME`: brings that assistant to the front and says how long it took (a hands-on check of cycling).
+func focusAssistant(_ name: String) {
+    let store = ButtonsStore(persist:false)
+    guard let a = store.assistants.first(where:{ $0.name == name }) else { print("No assistant called \(name)"); return }
+    let started = Date(), front = AssistantRouter.bringToFront(a,wait:0.5)
+    print("\(a.name): frontmost \(front) after \(Int(Date().timeIntervalSince(started) * 1000)) ms (now: \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "?"))")
 }
 
 // MARK: - Buttons window: the assistant list
@@ -385,7 +399,7 @@ func assistantsSelfTest() -> String {
 
     // What the button texts mean.
     precondition(voiceKind("Start voice chat") == .start && voiceKind("Hang up") == .stop && voiceKind("End call") == .stop,"Assistants: button names")
-    precondition(voiceKind("Start voice input") == nil && voiceKind("Send") == nil && voiceKind("Show transcript") == nil && voiceKind("Mute") == nil && voiceKind("Press and hold to record") == nil,"Assistants: not voice chat")
+    precondition(voiceKind("Start voice input") == nil && voiceKind("Send") == nil && voiceKind("Show transcript") == nil && voiceKind("Mute") == nil && voiceKind("Press and hold to record") == nil && voiceKind("Voice chat · 01:38") == nil,"Assistants: not voice chat")
 
     // Saved lists and mappings: the list round-trips, and mappings saved before these actions existed still load.
     let list = try! JSONDecoder().decode([Assistant].self,from:JSONEncoder().encode(store.assistants))

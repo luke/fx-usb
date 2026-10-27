@@ -558,6 +558,13 @@ final class MainWindow {
         try? rep.representation(using:.png,properties:[:])?.write(to:URL(fileURLWithPath:"\(directory)/buttons.png"))
     } else { print("buttons preview: renderer returned no image") }
     try? FileManager.default.createDirectory(atPath:directory,withIntermediateDirectories:true)
+    let assistantStore = ButtonsStore(persist:false)
+    assistantStore.applyAssistantPreset(); assistantStore.active = "Claude"; assistantStore.voiceOn["Claude"] = true; assistantStore.trusted = true
+    let assistantsRenderer = ImageRenderer(content:ButtonsView(store:assistantStore))
+    assistantsRenderer.scale = 2
+    if let image = assistantsRenderer.nsImage, let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data:tiff) {
+        try? rep.representation(using:.png,properties:[:])?.write(to:URL(fileURLWithPath:"\(directory)/buttons-assistants.png"))
+    }
     let devices = ["MacBook Pro Speakers","Studio Display Speakers","External Headphones"]
     let live = Snapshot(connected:true,status:"",level:0.45,mic:MicStatus(effect:1,sample:2,buttons:4,handle:0.6,motion:0.3),
                         recordingSince:Date().addingTimeInterval(-83),gain:2,useCalls:true,callsName:"FX–USB",firmware:"1.1.2",bufferMs:40,speakersOn:true,speakersVolume:0.6,speakersDevice:devices[1],outputs:devices)

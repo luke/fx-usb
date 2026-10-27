@@ -87,7 +87,10 @@ Give the mic's handle and buttons a job on your Mac. In the app, click **SET UP*
 | Record a voice note | Hold to record, let go to save a WAV in `~/Music/FX–USB/Voice notes`. |
 | Press a keyboard shortcut | One press, one shortcut. |
 | Run a Shortcut | Runs any Shortcut from the Shortcuts app. |
+| Previous / next assistant | One press brings the previous or next app in your assistant list to the front (default list: Grok Bot, Claude, ChatGPT; apps that are not installed are skipped). The active one shows beside BUTTONS and in the Buttons window. |
+| Toggle voice chat | One press starts voice chat in the active assistant, or ends it. FX–USB presses the app's own voice chat / hang up button through Accessibility (Grok Bot, best effort for Claude), or sends the app's voice hotkey (ChatGPT: ⌃⇧V, set in ChatGPT → Settings → Voice). |
 
+- **SET UP ASSISTANT BUTTONS** gives the orange button *Previous assistant*, the middle one *Next assistant* and the bottom one *Toggle voice chat* in one click. Edit, reorder or add apps in the assistant list that appears below. `FXMic --assistants` prints what was found and whether each app's voice button is visible to Accessibility.
 - A button with a Mac job stops doing its mic job (next effect, next sample, play sample), unless you tick **also on the mic**. The handle always lets your voice through.
 - Pressing keys for other apps needs a one-time permission: **System Settings → Privacy & Security → Accessibility → FX–USB**. The Buttons window links there.
 - Use the push-to-talk or dictation shortcut from your assistant's own settings, then record the same keys in FX–USB.
@@ -110,6 +113,7 @@ What was tried, measured and changed along the way is in [docs/engineering-log.m
 | `Sources/main.swift` | USB reader, packet decoder, timeline, jitter buffer, audio outputs, app delegate, test modes |
 | `Sources/UI.swift` | SwiftUI window, menu bar panel, mic drawing, menu bar and app icons |
 | `Sources/Buttons.swift` | Buttons window, key-combo recorder, and the engine that turns mic presses into Mac actions |
+| `Sources/Assistants.swift` | Assistant list, previous/next cycling, voice chat toggle (Accessibility button, then hotkey) and their self-test |
 | `Sources/FeedbackGuard.swift` | Frequency shifter, howl detector with notch filters, limiter, room simulation |
 | `Sources/fxmic_reader.py` | The reader uploaded to the mic's RAM (MicroPython + viper) |
 | `driver/` | Builds and installs the FX–USB virtual microphone from BlackHole v0.7.1 |
