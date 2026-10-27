@@ -30,9 +30,22 @@ struct BotKeys: Codable, Equatable {
                                       next:KeyCombo(keyCode:125,flags:CGEventFlags.maskAlternate.rawValue,modifierOnly:false))
     static let controlTab = BotKeys(previous:KeyCombo(keyCode:48,flags:Assistant.controlShift,modifierOnly:false),
                                     next:KeyCombo(keyCode:48,flags:CGEventFlags.maskControl.rawValue,modifierOnly:false))
-    static let presets: [(name: String, keys: BotKeys)] = [("⌥ ↑ / ⌥ ↓ (Grok Bot's own)",optionArrows),("⌃⇧ Tab / ⌃ Tab",controlTab)]
+    static let presets: [(name: String, keys: BotKeys)] = [("⌃⇧ Tab / ⌃ Tab (Cycle Bots)",controlTab),("⌥ ↑ / ⌥ ↓ (Previous / Next Bot)",optionArrows)]
     var name: String { BotKeys.presets.first { $0.keys == self }?.name ?? "Custom" }
 }
+
+/// Debug log (~/Library/Logs/FX-USB.log and the system log), so a press that does nothing never fails silently.
+var fxLogEnabled = true
+func fxLog(_ text: @autoclosure () -> String) {
+    guard fxLogEnabled else { return }
+    let message = text()
+    NSLog("FX-USB: %@",message)
+    let path = NSHomeDirectory() + "/Library/Logs/FX-USB.log"
+    let line = "\(ISO8601DateFormatter().string(from:Date())) \(message)\n"
+    if let handle = FileHandle(forWritingAtPath:path) { handle.seekToEndOfFile(); handle.write(Data(line.utf8)); handle.closeFile() }
+    else { try? line.write(toFile:path,atomically:true,encoding:.utf8) }
+}
+func frontmostName() -> String { NSWorkspace.shared.frontmostApplication.map { "\($0.localizedName ?? "?") [\($0.bundleIdentifier ?? "?")]" } ?? "none" }
 
 enum VoiceKind { case start, stop, confirm }
 /// `restarted`: voice chat started here after ending a call that was running in another chat.
@@ -101,10 +114,12 @@ final class AssistantRouter {
             if !running(a) { _ = activate(a,0.5); message = "Opening Grok Bot. Press again to switch bots." }
             else {
                 let before = readBot(a), front = activate(a,0.5)
+                fxLog("bot \(word): open=\(before ?? "?") frontmost=\(front) now=\(frontmostName()) trusted=\(trusted()) keys=\(combo.label)")
                 if !trusted() { message = "Allow FX–USB in System Settings → Privacy & Security → Accessibility." }
                 else if !front { message = "Could not bring Grok Bot to the front." }
                 else {
                     tap(combo)
+                    fxLog("bot \(word): posted \(combo.label)")
                     if let before {      // wait (briefly) for the chat to change, then say which bot is open
                         var now = readBot(a), tries = 0
                         while now == before && tries < 7 { pause(0.06); now = readBot(a); tries += 1 }
@@ -113,6 +128,7 @@ final class AssistantRouter {
                     }
                 }
             }
+            fxLog("bot \(word): result \(message)")
             onMain { [self] in
                 if let name { store.bot = name }
                 store.notice = message
@@ -147,6 +163,7 @@ final class AssistantRouter {
                     }
                 }
             }
+            fxLog("voice \(a.name): wasOn=\(wasOn) result \(message)")
             onMain { [self] in
                 if let state { store.voiceOn[a.name] = state }
                 store.notice = message; busy = false
@@ -442,7 +459,7 @@ func assistantsSelfTest() -> String {
     router.trusted = { allowed }
     router.offload = { $0() }
     router.onMain = { $0() }
-    precondition(store.assistants.map { $0.name } == ["Grok Bot"] && store.botKeys == .optionArrows,"Assistants: default list is just Grok Bot")
+    precondition(store.assistants.map { $0.name } == ["Grok Bot"] && store.botKeys == .controlTab,"Assistants: default list is just Grok Bot")
     store.assistants = Assistant.defaults + Assistant.extras + [Assistant(name:"Ghost",path:"/nonexistent/Ghost.app",tryButton:false)]
     precondition(store.assistants.map { $0.name } == ["Grok Bot","Claude","ChatGPT","Ghost"],"Assistants: extended list")
 
@@ -455,10 +472,10 @@ func assistantsSelfTest() -> String {
     func tap(_ bits: UInt8) { var mic = MicStatus(effect:2,sample:1); mic.buttons = bits; engine.update(mic); mic.buttons = 0; engine.update(mic) }
     engine.connected(true); store.active = ""
 
-    // Bots inside Grok Bot: orange = ⌥ ↑, middle = ⌥ ↓ (it comes to the front first), and the open bot is read back.
+    // Bots inside Grok Bot: orange = ⌃⇧ Tab, middle = ⌃ Tab (it comes to the front first), and the open bot is read back.
     open = 1; store.active = ""; activated = []; keys = []
     tap(2)
-    precondition(keys == ["⌥ ↓ down","⌥ ↓ up"] && activated == ["Grok Bot/0.5"] && store.notice == "Bot: Bento" && store.bot == "Bento" && store.active == "Grok Bot","Assistants: next bot \(keys) \(store.notice)")
+    precondition(keys == ["⌃ Tab down","⌃ Tab up"] && activated == ["Grok Bot/0.5"] && store.notice == "Bot: Bento" && store.bot == "Bento" && store.active == "Grok Bot","Assistants: next bot \(keys) \(store.notice)")
     tap(2); tap(4); tap(4)
     precondition(store.bot == "Mac" && store.notice == "Bot: Mac" && keys.count == 8,"Assistants: previous bot \(store.bot)")
     tap(4); precondition(store.bot == "Grok Bot" && store.notice == "Bot: Grok Bot","Assistants: previous bot reaches the top")
@@ -466,11 +483,11 @@ func assistantsSelfTest() -> String {
     precondition(store.assistantLine == "Bot: Grok Bot · voice off","Assistants: bot line \(store.assistantLine)")
     store.voiceOn["Grok Bot"] = true                     // a call is running: switching bots only presses the bot keys, nothing else
     keys = []; pressed = []; tap(2); tap(2)
-    precondition(keys == ["⌥ ↓ down","⌥ ↓ up","⌥ ↓ down","⌥ ↓ up"] && pressed.isEmpty && store.voiceOn["Grok Bot"] == true && store.bot == "Bento" && store.assistantLine == "Bot: Bento · voice on","Assistants: switching during a call \(keys) \(pressed)")
+    precondition(keys == ["⌃ Tab down","⌃ Tab up","⌃ Tab down","⌃ Tab up"] && pressed.isEmpty && store.voiceOn["Grok Bot"] == true && store.bot == "Bento" && store.assistantLine == "Bot: Bento · voice on","Assistants: switching during a call \(keys) \(pressed)")
     store.voiceOn["Grok Bot"] = false
-    store.botKeys = .controlTab; keys = []; tap(2); tap(4)    // the alternative keys
-    precondition(keys == ["⌃ Tab down","⌃ Tab up","⌃⇧ Tab down","⌃⇧ Tab up"] && store.botKeys.name == "⌃⇧ Tab / ⌃ Tab","Assistants: ⌃Tab keys \(keys)")
-    store.botKeys = .optionArrows
+    store.botKeys = .optionArrows; keys = []; tap(2); tap(4)    // the alternative keys
+    precondition(keys == ["⌥ ↓ down","⌥ ↓ up","⌥ ↑ down","⌥ ↑ up"] && store.botKeys.name.hasPrefix("⌥ ↑ / ⌥ ↓"),"Assistants: ⌥ arrow keys \(keys)")
+    store.botKeys = .controlTab
     readable = false; keys = []; tap(2)
     precondition(keys.count == 2 && store.notice == "Next bot" && store.bot == "Bento","Assistants: name unreadable \(store.notice)")
     tap(4); precondition(store.notice == "Previous bot","Assistants: previous, name unreadable")
@@ -557,8 +574,26 @@ func assistantsSelfTest() -> String {
     let reloaded = try! JSONDecoder().decode([String:Mapping].self,from:JSONEncoder().encode(Dictionary(uniqueKeysWithValues:store.mappings.map { ($0.key.rawValue,$0.value) })))
     precondition(reloaded["play"]?.action == .voiceToggle && reloaded["effect"]?.action == .previousAssistant,"Assistants: new mappings round trip")
     let keysBack = try! JSONDecoder().decode(BotKeys.self,from:JSONEncoder().encode(BotKeys.controlTab))
-    precondition(keysBack == .controlTab && BotKeys.optionArrows.name.hasPrefix("⌥ ↑"),"Assistants: bot keys round trip")
+    precondition(keysBack == .controlTab && BotKeys.controlTab.name.hasPrefix("⌃⇧ Tab"),"Assistants: bot keys round trip")
     store.applyAssistantPreset()
     precondition(store[.effect].action == .previousBot && store[.sample].action == .nextBot,"Assistants: preset uses bots, not apps")
     return "assistants (preset, bot switching, app cycling, voice toggle, fallbacks)"
+}
+
+/// `FXMic --press next-bot|previous-bot|voice`: runs the real engine path (real activation, real keys) without the mic.
+func pressHook(_ name: String) {
+    let store = ButtonsStore(persist:false)      // nothing is saved; `--keys option|control|option-ctl` picks the bot keys
+    switch argument("--keys") ?? "control" { case "option": store.botKeys = .optionArrows; default: store.botKeys = .controlTab }   // control = ⌃ Tab, option = ⌥ ↓
+    let engine = ButtonEngine(store:store,send:{ _ in },startVoiceNote:{ false },stopVoiceNote:{ nil })
+    print("trusted: \(AXIsProcessTrusted()), keys: \(store.botKeys.previous.label) / \(store.botKeys.next.label), front: \(frontmostName())")
+    let before = engine.router.readBot(Assistant.grokBot)
+    switch name {
+    case "next-bot": engine.router.cycleBot(1)
+    case "previous-bot": engine.router.cycleBot(-1)
+    case "voice": engine.router.toggleVoice()
+    default: print("Use next-bot, previous-bot or voice"); return
+    }
+    RunLoop.main.run(until:Date().addingTimeInterval(2.5))     // the router works in the background and reports on the main queue
+    print("open bot before: \(before ?? "?"), after: \(engine.router.readBot(Assistant.grokBot) ?? "?")")
+    print("notice: \(store.notice)")
 }

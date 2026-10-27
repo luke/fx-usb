@@ -686,6 +686,7 @@ final class AppDelegate: NSObject,NSApplicationDelegate {
             self.defaults.set(device.uid,forKey:"speakersUID"); self.refresh()
         }
         model.openWindow = { [weak self] in self?.popover.performClose(nil); self?.window.show() }
+        model.allowAccess = { [weak self] in self?.buttons.refreshTrust(prompt:true); NSWorkspace.shared.open(URL(string:"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!) }
         model.openButtons = { [weak self] in self?.popover.performClose(nil); self?.buttonsWindow.show() }
         buttonsWindow = ButtonsWindow(store:buttons)
         model.openSoundSettings = { [weak self] in self?.settings() }
@@ -732,6 +733,7 @@ final class AppDelegate: NSObject,NSApplicationDelegate {
         if snap.connected { engine.update(snap.mic) }
         snap.buttonsSummary = buttons.usesAssistants && !buttons.assistantLine.isEmpty ? "\(buttons.assistantLine) · \(buttons.summary)" : buttons.summary
         if buttons.notice != lastNotice { lastNotice = buttons.notice; noticeAt = Date() }
+        snap.needsAccess = buttons.usesKeys && !AXIsProcessTrusted()
         snap.notice = Date().timeIntervalSince(noticeAt) < 4 ? buttons.notice : ""
         if let caught = monitor.guardian?.caught, caught != lastCaught { lastCaught = caught; caughtAt = Date() }
         snap.feedbackCaught = snap.speakersOn && Date().timeIntervalSince(caughtAt) < 4
@@ -985,6 +987,7 @@ func argument(_ name: String) -> String? {
 if CommandLine.arguments.contains("--self-test") { selfTest() }
 else if CommandLine.arguments.contains("--assistants") { printAssistants() }
 else if let name = argument("--assistant-focus") { focusAssistant(name) }
+else if let name = argument("--press") { pressHook(name) }
 else if let directory = argument("--iconset") { try! writeIconset(directory) }
 else if let directory = argument("--preview") { MainActor.assumeIsolated { renderPreviews(directory) } }
 else if CommandLine.arguments.contains("--devices") { for device in audioDevices() { print("\(device.id) \(device.name) [\(device.uid)] \(nominalRate(device.id)) Hz, buffer \(bufferFrames(device.id)) frames") } }

@@ -95,7 +95,7 @@ final class ButtonsStore: ObservableObject {
         mappings = loaded
         assistants = persist ? (UserDefaults.standard.data(forKey:"assistantList").flatMap { try? JSONDecoder().decode([Assistant].self,from:$0) } ?? Assistant.defaults) : Assistant.defaults
         active = persist ? UserDefaults.standard.string(forKey:"activeAssistant") ?? "" : ""
-        botKeys = persist ? UserDefaults.standard.data(forKey:"botKeys").flatMap { try? JSONDecoder().decode(BotKeys.self,from:$0) } ?? .optionArrows : .optionArrows
+        botKeys = persist ? UserDefaults.standard.data(forKey:"botKeys").flatMap { try? JSONDecoder().decode(BotKeys.self,from:$0) } ?? .controlTab : .controlTab
     }
     subscript(control: Control) -> Mapping {
         get { mappings[control] ?? Mapping() }
@@ -111,6 +111,8 @@ final class ButtonsStore: ObservableObject {
         if let data = try? JSONEncoder().encode(assistants) { UserDefaults.standard.set(data,forKey:"assistantList") }
     }
     static let assistantActions: Set<MacAction> = [.previousAssistant,.nextAssistant,.voiceToggle,.previousBot,.nextBot]
+    /// A control is set to press keys (or use a key-driven assistant action).
+    var usesKeys: Bool { Control.allCases.contains { [.assistant,.keys,.voiceToggle,.previousBot,.nextBot].contains(self[$0].action) } }
     var usesAssistants: Bool { Control.allCases.contains { ButtonsStore.assistantActions.contains(self[$0].action) } }
     var usesBots: Bool { Control.allCases.contains { [.previousBot,.nextBot].contains(self[$0].action) } }
     /// "Bot: Mac · voice off", shown beside the buttons summary while the buttons drive assistants.
@@ -207,6 +209,7 @@ final class ButtonEngine {
     }
     private func press(_ control: Control, _ mic: MicStatus) {
         let m = store[control]
+        fxLog("press \(control.rawValue) action=\(m.action.rawValue) trusted=\(AXIsProcessTrusted()) front=\(frontmostName())")
         if m.clean && mic.effect != -1 { restoreEffect[control] = mic.effect; send("e0") }
         switch m.action {
         case .none: break
@@ -303,7 +306,7 @@ struct ButtonsView: View {
         .foregroundColor(Palette.ink)
         .onAppear { store.refreshTrust(); store.loadShortcuts() }
     }
-    var needsKeys: Bool { Control.allCases.contains { [.assistant,.keys,.voiceToggle,.previousBot,.nextBot].contains(store[$0].action) } }
+    var needsKeys: Bool { store.usesKeys }
 }
 
 struct SmallButton: View {
@@ -513,6 +516,7 @@ final class ButtonsWindow {
 
 /// Self-test: simulated presses through the engine, with fake keys, commands and recorder.
 func buttonsSelfTest() -> String {
+    fxLogEnabled = false; defer { fxLogEnabled = true }     // the self-test must not write the real log
     let store = ButtonsStore(persist:false)
     var commands: [String] = [], keys: [String] = [], notes: [String] = []
     let engine = ButtonEngine(store:store,send:{ commands.append($0) },

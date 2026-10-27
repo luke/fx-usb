@@ -38,6 +38,7 @@ struct Snapshot: Equatable {
     var pressedSample: Int?
     var buttonsSummary = "Not set up"
     var notice = ""
+    var needsAccess = false      // a button is set to press keys but FX–USB is not trusted for Accessibility
 }
 
 final class MicModel: ObservableObject {
@@ -56,6 +57,7 @@ final class MicModel: ObservableObject {
     var chooseOutput: (String) -> Void = { _ in }
     var openWindow: () -> Void = {}
     var openButtons: () -> Void = {}
+    var allowAccess: () -> Void = {}
     var openSoundSettings: () -> Void = {}
     var quit: () -> Void = {}
 }
@@ -99,6 +101,7 @@ struct DotMark: View {
 
 func hint(_ s: Snapshot) -> String {
     if !s.connected { return s.status.isEmpty ? "Connect FX MIC with a USB-C cable." : s.status }
+    if s.needsAccess { return "The buttons can't press keys yet. In Accessibility settings, switch FX–USB off and on (or remove and re-add it), then quit and reopen FX–USB." }
     if !s.notice.isEmpty { return s.notice }
     if s.feedbackCaught { return "Feedback caught and filtered. Lower the speakers or point the mic away." }
     if !s.bridgeInstalled { return "Install the FX–USB microphone to use it in calls." }
@@ -214,7 +217,11 @@ struct ButtonsRow: View {
             Text("BUTTONS").font(mono).foregroundColor(Palette.quiet)
             Text(model.snapshot.buttonsSummary).font(mono).foregroundColor(Palette.ink).lineLimit(1).truncationMode(.tail)
             Spacer(minLength:6)
-            Button(action:model.openButtons) { Text("SET UP ›").font(mono).foregroundColor(Palette.ink) }.buttonStyle(.plain)
+            if model.snapshot.needsAccess {
+                Button(action:model.allowAccess) { Text("ALLOW ACCESS ›").font(mono).lineLimit(1).fixedSize().foregroundColor(Palette.orange) }.buttonStyle(.plain)
+            } else {
+                Button(action:model.openButtons) { Text("SET UP ›").font(mono).foregroundColor(Palette.ink) }.buttonStyle(.plain)
+            }
         }
     }
 }
@@ -569,8 +576,9 @@ final class MainWindow {
     let live = Snapshot(connected:true,status:"",level:0.45,mic:MicStatus(effect:1,sample:2,buttons:4,handle:0.6,motion:0.3),
                         recordingSince:Date().addingTimeInterval(-83),gain:2,useCalls:true,callsName:"FX–USB",firmware:"1.1.2",bufferMs:40,speakersOn:true,speakersVolume:0.6,speakersDevice:devices[1],outputs:devices)
     let idle = Snapshot(connected:true,mic:MicStatus(effect:-1,sample:1),firmware:"1.1.2",bufferMs:40,speakersDevice:devices[1],outputs:devices)
+    var access = idle; access.needsAccess = true
     let offline = Snapshot(connected:false,status:"Connect FX–MIC by USB-C and press its handle")
-    for (name,snapshot) in [("live",live),("idle",idle),("offline",offline)] {
+    for (name,snapshot) in [("live",live),("idle",idle),("offline",offline),("access",access)] {
         let model = MicModel(); model.snapshot = snapshot
         model.snapshot.buttonsSummary = "Handle → Claude · Bottom → voice note"
         for (suffix,view) in [("",AnyView(MainView(model:model))),("-menubar",AnyView(PopoverView(model:model)))] {
