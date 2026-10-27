@@ -730,7 +730,7 @@ final class AppDelegate: NSObject,NSApplicationDelegate {
         // Mic presses → Mac actions (Buttons window).
         if snap.connected != wasConnected { engine.connected(snap.connected); wasConnected = snap.connected }
         if snap.connected { engine.update(snap.mic) }
-        snap.buttonsSummary = buttons.summary
+        snap.buttonsSummary = buttons.usesAssistants && !buttons.assistantLine.isEmpty ? "\(buttons.assistantLine) · \(buttons.summary)" : buttons.summary
         if buttons.notice != lastNotice { lastNotice = buttons.notice; noticeAt = Date() }
         snap.notice = Date().timeIntervalSince(noticeAt) < 4 ? buttons.notice : ""
         if let caught = monitor.guardian?.caught, caught != lastCaught { lastCaught = caught; caughtAt = Date() }
@@ -983,6 +983,7 @@ func argument(_ name: String) -> String? {
 }
 
 if CommandLine.arguments.contains("--self-test") { selfTest() }
+else if CommandLine.arguments.contains("--assistants") { printAssistants() }
 else if let directory = argument("--iconset") { try! writeIconset(directory) }
 else if let directory = argument("--preview") { MainActor.assumeIsolated { renderPreviews(directory) } }
 else if CommandLine.arguments.contains("--devices") { for device in audioDevices() { print("\(device.id) \(device.name) [\(device.uid)] \(nominalRate(device.id)) Hz, buffer \(bufferFrames(device.id)) frames") } }

@@ -13,7 +13,7 @@ enum Control: String, CaseIterable, Codable, Identifiable {
 }
 
 enum MacAction: String, CaseIterable, Codable, Identifiable {
-    case none, assistant, voiceNote, keys, shortcut
+    case none, assistant, voiceNote, keys, shortcut, previousAssistant, nextAssistant, voiceToggle
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -22,6 +22,9 @@ enum MacAction: String, CaseIterable, Codable, Identifiable {
         case .voiceNote: return "Record a voice note"
         case .keys: return "Press a keyboard shortcut"
         case .shortcut: return "Run a Shortcut"
+        case .previousAssistant: return "Previous assistant"
+        case .nextAssistant: return "Next assistant"
+        case .voiceToggle: return "Toggle voice chat"
         }
     }
     /// Actions that last as long as the control is held.
@@ -74,6 +77,9 @@ final class ButtonsStore: ObservableObject {
     @Published var trusted = AXIsProcessTrusted()
     @Published var shortcuts: [String] = []
     @Published var notice = ""
+    @Published var assistants: [Assistant] { didSet { saveAssistants() } }
+    @Published var active: String { didSet { if persist { UserDefaults.standard.set(active,forKey:"activeAssistant") } } }
+    @Published var voiceOn: [String:Bool] = [:]
     private let persist: Bool
     init(persist: Bool = true) {
         self.persist = persist
@@ -83,6 +89,8 @@ final class ButtonsStore: ObservableObject {
             for (key,value) in decoded { if let control = Control(rawValue:key) { loaded[control] = value } }
         }
         mappings = loaded
+        assistants = persist ? (UserDefaults.standard.data(forKey:"assistantList").flatMap { try? JSONDecoder().decode([Assistant].self,from:$0) } ?? Assistant.defaults) : Assistant.defaults
+        active = persist ? UserDefaults.standard.string(forKey:"activeAssistant") ?? "" : ""
     }
     subscript(control: Control) -> Mapping {
         get { mappings[control] ?? Mapping() }
@@ -93,6 +101,21 @@ final class ButtonsStore: ObservableObject {
         let plain = Dictionary(uniqueKeysWithValues:mappings.map { ($0.key.rawValue,$0.value) })
         if let data = try? JSONEncoder().encode(plain) { UserDefaults.standard.set(data,forKey:"buttonMappings") }
     }
+    private func saveAssistants() {
+        guard persist else { return }
+        if let data = try? JSONEncoder().encode(assistants) { UserDefaults.standard.set(data,forKey:"assistantList") }
+    }
+    static let assistantActions: Set<MacAction> = [.previousAssistant,.nextAssistant,.voiceToggle]
+    var usesAssistants: Bool { Control.allCases.contains { ButtonsStore.assistantActions.contains(self[$0].action) } }
+    /// "Active: Claude · voice off", shown beside the buttons summary while the buttons drive assistants.
+    var assistantLine: String { active.isEmpty ? "" : "Active: \(active) · voice \(voiceOn[active] == true ? "on" : "off")" }
+    /// One click: orange = previous assistant, middle = next assistant, bottom = toggle voice chat. The handle is left as it is.
+    func applyAssistantPreset() {
+        self[.effect] = Mapping(action:.previousAssistant)
+        self[.sample] = Mapping(action:.nextAssistant)
+        self[.play] = Mapping(action:.voiceToggle)
+        notice = "Assistant buttons are set up."
+    }
     /// Buttons whose mic action is switched off (bits for the mic's block mask).
     var blockMask: UInt8 {
         Control.allCases.filter { $0 != .handle && self[$0].action != .none && !self[$0].alsoOnMic }.reduce(0) { $0 | $1.bit }
@@ -102,7 +125,16 @@ final class ButtonsStore: ObservableObject {
         guard !used.isEmpty else { return "Not set up" }
         return used.map { control -> String in
             let m = self[control]
-            let what = m.action == .assistant ? m.assistant : m.action == .voiceNote ? "voice note" : m.action == .keys ? (m.combo?.label ?? "shortcut") : (m.shortcutName.isEmpty ? "Shortcut" : m.shortcutName)
+            let what: String
+            switch m.action {
+            case .assistant: what = m.assistant
+            case .voiceNote: what = "voice note"
+            case .keys: what = m.combo?.label ?? "shortcut"
+            case .previousAssistant: what = "previous assistant"
+            case .nextAssistant: what = "next assistant"
+            case .voiceToggle: what = "voice chat"
+            default: what = m.shortcutName.isEmpty ? "Shortcut" : m.shortcutName
+            }
             return "\(control == .handle ? "Handle" : control.name.replacingOccurrences(of:" button",with:"")) → \(what)"
         }.joined(separator:" · ")
     }
@@ -138,11 +170,16 @@ final class ButtonEngine {
     private var sentMask: UInt8?
     /// Swapped out by the self-test so it never presses real keys.
     lazy var keyPoster: (KeyCombo, Bool) -> Void = { [unowned self] combo, isDown in self.postCombo(combo,down:isDown) }
+    /// Assistant cycling and the voice toggle; its taps go through `keyPoster`.
+    lazy var router = AssistantRouter(store:store,tap:{ [unowned self] combo in self.keyPoster(combo,true); self.keyPoster(combo,false) })
     init(store: ButtonsStore, send: @escaping (String) -> Void, startVoiceNote: @escaping () -> Bool, stopVoiceNote: @escaping () -> String?) {
         self.store = store; self.send = send; self.startVoiceNote = startVoiceNote; self.stopVoiceNote = stopVoiceNote
     }
     /// The mic forgets the mask when the reader restarts, so it is resent on every connect.
-    func connected(_ isConnected: Bool) { if !isConnected { sentMask = nil; releaseAll() } }
+    func connected(_ isConnected: Bool) {
+        if !isConnected { sentMask = nil; releaseAll() }
+        else if store.usesAssistants { router.warmActive() }
+    }
     func syncMask() {
         let mask = store.blockMask
         if mask != sentMask { send("m\(mask)"); sentMask = mask }
@@ -171,6 +208,9 @@ final class ButtonEngine {
         case .shortcut:
             let name = m.shortcutName
             if !name.isEmpty { DispatchQueue.global().async { _ = try? runTool("/usr/bin/shortcuts",["run",name]) } }
+        case .previousAssistant: router.cycle(-1)
+        case .nextAssistant: router.cycle(1)
+        case .voiceToggle: router.toggleVoice(); store.refreshTrust()
         }
     }
     private func release(_ control: Control) {
@@ -218,6 +258,10 @@ struct ButtonsView: View {
                 HStack { DotMark(size:14); Text("BUTTONS").font(helvetica(15,.medium)); Spacer() }
                 Text("Give the mic's controls a job on your Mac. A control with a job stops doing its mic job, unless you tick \u{201C}also on the mic\u{201D}.")
                     .font(helvetica(13)).foregroundColor(Palette.quiet).fixedSize(horizontal:false,vertical:true)
+                HStack(spacing:8) {
+                    SmallButton(title:"SET UP ASSISTANT BUTTONS") { store.applyAssistantPreset(); store.refreshTrust() }
+                    Text("orange ◀  middle ▶  bottom voice").font(mono).foregroundColor(Palette.quiet)
+                }.padding(.top,4)
             }.padding(.horizontal,22).padding(.top,14).padding(.bottom,14)
             if needsKeys && !store.trusted {
                 HStack(alignment:.top,spacing:10) {
@@ -237,6 +281,7 @@ struct ButtonsView: View {
             }
             .background(Palette.rule)
             .overlay(Rectangle().fill(Palette.rule).frame(height:1),alignment:.top)
+            if store.usesAssistants { AssistantsPanel(store:store) }
             Text(store.notice.isEmpty ? "Changes apply straight away." : store.notice)
                 .font(mono).foregroundColor(Palette.quiet).padding(.horizontal,22).padding(.vertical,12)
         }
@@ -245,7 +290,7 @@ struct ButtonsView: View {
         .foregroundColor(Palette.ink)
         .onAppear { store.refreshTrust(); store.loadShortcuts() }
     }
-    var needsKeys: Bool { Control.allCases.contains { [.assistant,.keys].contains(store[$0].action) } }
+    var needsKeys: Bool { Control.allCases.contains { [.assistant,.keys,.voiceToggle].contains(store[$0].action) } }
 }
 
 struct SmallButton: View {
@@ -274,7 +319,7 @@ struct ControlRow: View {
             Field(label:"ON YOUR MAC") {
                 ChoiceMenu(value:m.action.title,options:MacAction.allCases.map { $0.title }) { title in
                     store[control].action = MacAction.allCases.first { $0.title == title } ?? .none
-                    if store[control].action == .assistant || store[control].action == .keys { store.refreshTrust() }
+                    if [.assistant,.keys,.voiceToggle].contains(store[control].action) { store.refreshTrust() }
                 }
             }
             if m.action == .assistant {
@@ -317,6 +362,9 @@ struct ControlRow: View {
         case .voiceNote: return "\(verb) to record a voice note\(clean). Let go to save it in Music/FX–USB/Voice notes."
         case .keys: return m.combo.map { "\(tap): FX–USB presses \($0.label)." } ?? "Record the shortcut to press."
         case .shortcut: return m.shortcutName.isEmpty ? "Choose a Shortcut from the Shortcuts app." : "\(tap): runs the Shortcut \u{201C}\(m.shortcutName)\u{201D}."
+        case .previousAssistant: return "\(tap): brings the previous assistant in the list to the front."
+        case .nextAssistant: return "\(tap): brings the next assistant in the list to the front."
+        case .voiceToggle: return "\(tap): starts voice chat in the active assistant, or ends it (its voice button, or its voice key)."
         }
     }
 }
@@ -474,5 +522,5 @@ func buttonsSelfTest() -> String {
     precondition(keys == expectKeys,"Buttons: keys \(keys)")
     precondition(notes == ["start","stop"] && store.notice == "Voice note saved: Voice note.wav","Buttons: voice note \(notes)")
     precondition(store.summary == "Handle → Claude · Orange → ⌘ R · Bottom → voice note","Buttons: summary \(store.summary)")
-    return "buttons (mask, clean voice, hold, tap, voice note)"
+    return "buttons (mask, clean voice, hold, tap, voice note), " + assistantsSelfTest()
 }
